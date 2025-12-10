@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"log"
+	"strconv"
+	"time"
 
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
@@ -85,7 +87,6 @@ func main() {
 			if err != nil {
 				log.Printf("could not make a command move: %v", err)
 			}
-
 			err = pubsub.PublishJSON(
 				channel,
 				routing.ExchangePerilTopic,
@@ -101,12 +102,34 @@ func main() {
 		case "help":
 			gamelogic.PrintClientHelp()
 		case "spam":
-			fmt.Print("Spamming not allowed yet!\n")
+			if len(input) < 2 {
+				log.Print("A second argument is required\n")
+			}
+			number, err := strconv.Atoi(input[1])
+			if err != nil {
+				log.Printf("could not convert second argument to int: %v", err)
+			}
+
+			for i := 0; i < number; i++ {
+				spamLog := new(routing.GameLog)
+				spamLog.CurrentTime = time.Now()
+				spamLog.Message = "spam"
+				spamLog.Username = username
+				err = pubsub.PublishGob(
+					channel,
+					routing.ExchangePerilTopic,
+					routing.GameLogSlug+"."+username,
+					spamLog,
+				)
+				if err != nil {
+					log.Printf("could not publish log: %v", err)
+				}
+			}
 		case "quit":
-			gamelogic.PrintQuit()
+		gamelogic.PrintQuit()
 		default:
-			log.Print("Command unknown :/\n'help' to see the available commands\n")
-			continue
+		log.Print("Command unknown :/\n'help' to see the available commands\n")
+		continue
 		}
 	}
 }

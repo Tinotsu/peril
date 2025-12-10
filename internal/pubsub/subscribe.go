@@ -2,6 +2,8 @@ package pubsub
 
 import (
 	"encoding/json"
+	"encoding/gob"
+	"bytes"
 	"fmt"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -22,7 +24,61 @@ func SubscribeJSON[T any](
     queueType SimpleQueueType, // an enum to represent "durable" or "transient"
     handler func(T) Acktype,
 ) error {
-	chann, queue, err := DeclareAndBind(conn, exchange, queueName, key, queueType)
+	unmarshaller := func(data []byte) (T, error) {
+		var target T
+		err := json.Unmarshal(data, &target)
+		if err != nil {
+			fmt.Printf("SubscribeJSON, Unmarshal: %v\n", err)
+			return target, err
+		}
+		return target, nil
+	}
+	subscribe(conn, exchange, queueName, key, queueType, handler, unmarshaller)
+
+	return nil
+}
+
+func SubscribeGob[T any](
+    conn *amqp.Connection,
+    exchange,
+    queueName,
+    key string,
+    queueType SimpleQueueType, // an enum to represent "durable" or "transient"
+    handler func(T) Acktype,
+) error {
+	unmarshaller := func(data []byte) (T, error) {
+		buf := bytes.NewBuffer(data)
+		dec := gob.NewDecoder(buf)
+		var target T
+
+		err := dec.Decode(&target)
+		if err != nil {
+			fmt.Printf("SubscribeGOB, Decode: %v\n", err)
+			return target, err
+		}
+		return target, nil
+	}
+	subscribe(conn, exchange, queueName, key, queueType, handler, unmarshaller)
+
+	return nil
+}
+
+func subscribe[T any](
+	conn *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	simpleQueueType SimpleQueueType,
+	handler func(T) Acktype,
+	unmarshaller func([]byte) (T, error),
+) error {
+	chann, queue, err := DeclareAndBind(conn, exchange, queueName, key, simpleQueueType)
+	if err != nil {
+		fmt.Printf("SubscribeJSON, DeclareAndBind: %v\n", err)
+		return err
+	}
+
+	err = chann.Qos(10, 0, false) 
 	if err != nil {
 		fmt.Printf("SubscribeJSON, DeclareAndBind: %v\n", err)
 		return err
@@ -30,14 +86,8 @@ func SubscribeJSON[T any](
 
 	msgs, err := chann.Consume(queue.Name, "", false, false, false, false, nil)
 	if err != nil {
-		fmt.Printf("SubscribeJSON, Consume: %v\n", err)
+		fmt.Printf("Could no set QoS: %v\n", err)
 		return err
-	}
-
-	unmarshaller := func(data []byte) (T, error) {
-		var target T
-		err := json.Unmarshal(data, &target)
-		return target, err
 	}
 
 	go func() {
@@ -45,7 +95,7 @@ func SubscribeJSON[T any](
 		for msg :=  range msgs {
 			target, err := unmarshaller(msg.Body)
 			if err != nil {
-				fmt.Printf("SubscribeJSON, unmarshaller: %v\n", err)
+				fmt.Printf("subscribe, unmarshaller: %v\n", err)
 				continue
 			}
 			ack := handler(target)
